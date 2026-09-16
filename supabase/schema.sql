@@ -46,7 +46,8 @@ create table responses (
   answers jsonb not null default '{}', -- { "<candidate_id>": "yes" | "maybe" | "no" }
   comment text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (event_id, respondent_name) -- 同じ名前で再送信した場合は上書き（調整さんと同様の挙動）
 );
 create index responses_event_id_idx on responses(event_id);
 
