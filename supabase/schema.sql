@@ -16,7 +16,8 @@ create table organizers (
 );
 
 create table events (
-  id uuid primary key default gen_random_uuid(), -- そのままURLに使用（推測困難なUUIDv4）
+  id uuid primary key default gen_random_uuid(), -- 参加者向けURLに使用（推測困難なUUIDv4）
+  organizer_token uuid not null default gen_random_uuid() unique, -- 幹事向け管理URLに使用。idとは別の秘密値で、参加者には絶対に渡さない
   title text not null,
   memo text,
   organizer_id uuid references organizers(id) on delete set null, -- Google連携なしのイベントはnull
@@ -50,18 +51,21 @@ create table responses (
 create index responses_event_id_idx on responses(event_id);
 
 -- Row Level Security: 全テーブルで有効化。
--- 読み取りはURLを知っていれば誰でも可能（IDの推測困難性がアクセス制御の実質）。
--- 書き込みポリシーは意図的に定義しない（= anon/authenticatedからの直接書き込みはデフォルト拒否）。
--- 参加者の回答・イベント作成・確定操作は、すべてサーバー側のServer Action経由でservice_role keyを使って行う。
+-- events.organizer_token（幹事だけが知る秘密値）が anon key で直接SELECTされないよう、
+-- events / candidates は anon 向けポリシーを一切定義しない（service_role専用）。
+-- Server Component（Next.jsサーバー側）は service_role client で読み書きするため、これで支障はない。
+-- 唯一 anon に公開するのは responses の SELECT のみ：ブラウザの Realtime 購読（postgres_changes）が
+-- anon key で動作するために必須（回答一覧のリアルタイム反映）。書き込みは全テーブルとも
+-- サーバー側のServer Action経由でservice_role keyを使って行う。
 
 alter table organizers enable row level security;
 -- organizersにはanon/authenticated向けのポリシーを一切定義しない（service_role専用・完全遮断）。
 
 alter table events enable row level security;
-create policy events_select_public on events for select using (true);
+-- anon/authenticated向けポリシーなし（service_role専用）。organizer_tokenの漏洩を防ぐため。
 
 alter table candidates enable row level security;
-create policy candidates_select_public on candidates for select using (true);
+-- anon/authenticated向けポリシーなし（service_role専用）。events同様、直接公開する必要がないため。
 
 alter table responses enable row level security;
 create policy responses_select_public on responses for select using (true);

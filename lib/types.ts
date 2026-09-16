@@ -9,6 +9,9 @@ export type Candidate = {
 
 export type EventRecord = {
   id: string;
+  // 幹事の管理URL用の秘密値。参加者向けページ（app/e/[eventId]）ではAPIレスポンス・HTML双方から
+  // 絶対に除外すること（select時に明示的にomitする）。
+  organizer_token: string;
   title: string;
   memo: string | null;
   organizer_id: string | null;
@@ -17,6 +20,9 @@ export type EventRecord = {
   calendar_html_link: string | null;
   created_at: string;
 };
+
+// 参加者向けページで安全に使えるよう organizer_token を除いた型
+export type PublicEventRecord = Omit<EventRecord, "organizer_token">;
 
 export type ResponseRecord = {
   id: string;
