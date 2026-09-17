@@ -38,3 +38,8 @@ export type EventWithDetails = EventRecord & {
   candidates: Candidate[];
   responses: ResponseRecord[];
 };
+
+// Googleカレンダーの予定と候補日が重なっている場合の要約（幹事がGoogle連携している時のみ算出）
+export type CollisionInfo = { summary: string };
+/** candidate.id -> 被っている予定の要約 */
+export type CollisionMap = Record<string, CollisionInfo>;

@@ -2,7 +2,7 @@ import "server-only";
 import { google } from "googleapis";
 import { createOrganizerOAuthClient, type OrganizerRecord } from "@/lib/auth";
 import { toJstRfc3339 } from "@/lib/date";
-import type { Candidate } from "@/lib/types";
+import type { Candidate, CollisionMap } from "@/lib/types";
 
 const JST = "Asia/Tokyo";
 const TIME_ZONE = JST;
@@ -11,9 +11,6 @@ const TIME_ZONE = JST;
 export const CANDIDATE_DURATION_MINUTES = 60;
 const CANDIDATE_DURATION_MS = CANDIDATE_DURATION_MINUTES * 60 * 1000;
 
-export type CollisionInfo = { summary: string };
-/** candidate.id -> 被っている予定の要約 */
-export type CollisionMap = Record<string, CollisionInfo>;
 /** 突合の結果。failedがtrueのときは「重なりなし」ではなく「確認できなかった」を意味する。 */
 export type CollisionResult = { collisions: CollisionMap; failed: boolean };
 

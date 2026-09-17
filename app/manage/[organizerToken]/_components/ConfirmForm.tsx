@@ -73,7 +73,7 @@ export function ConfirmForm({
       </button>
 
       {error && (
-        <p className="text-sm text-vermilion" role="alert">
+        <p className="text-sm text-mustard" role="alert">
           {error}
         </p>
       )}

@@ -11,7 +11,7 @@ export function ConfirmedView({
   responses: ResponseRecord[];
 }) {
   const attendees = candidate
-    ? responses.filter((response) => response.answers[candidate.id] === "yes")
+    ? responses.filter((response) => response.answers?.[candidate.id] === "yes")
     : [];
   const confirmed = candidate ? formatConfirmedDate(candidate.starts_at) : null;
 

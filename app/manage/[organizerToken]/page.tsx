@@ -5,9 +5,9 @@ import { AppFooter } from "@/components/AppFooter";
 import { ResultsTable } from "@/components/ResultsTable";
 import { authOptions, getOrganizerById } from "@/lib/auth";
 import { formatCandidate, formatConfirmedDate } from "@/lib/date";
-import { findCalendarCollisions, type CollisionMap } from "@/lib/google/calendar";
+import { findCalendarCollisions } from "@/lib/google/calendar";
 import { createServiceRoleClient } from "@/lib/supabase/server";
-import type { Candidate, EventRecord, ResponseRecord } from "@/lib/types";
+import type { Candidate, CollisionMap, EventRecord, ResponseRecord } from "@/lib/types";
 import { ConfirmForm, type ConfirmChoice } from "./_components/ConfirmForm";
 import { ReminderButton } from "./_components/ReminderButton";
 import { listPendingNames } from "./_components/pending";
@@ -17,6 +17,9 @@ export const metadata: Metadata = {
   title: "幹事ページ",
   robots: { index: false, follow: false },
 };
+
+// 回答は随時増えるため、毎回サーバーで最新を取得する（参加者ページと同じ扱い）。
+export const dynamic = "force-dynamic";
 
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -37,6 +40,14 @@ export default async function ManagePage({ params }: { params: Promise<{ organiz
     supabase.from("candidates").select("*").eq("event_id", event.id).order("sort_order", { ascending: true }),
     supabase.from("responses").select("*").eq("event_id", event.id).order("created_at", { ascending: true }),
   ]);
+  // 一時的なDB障害を「候補日なし・回答0人」と取り違えないよう、必ずログに残して注記も出す。
+  if (candidatesResult.error) {
+    console.error("候補日の取得に失敗しました", candidatesResult.error.message);
+  }
+  if (responsesResult.error) {
+    console.error("回答の取得に失敗しました", responsesResult.error.message);
+  }
+  const aggregateFailed = Boolean(candidatesResult.error || responsesResult.error);
   const candidates = (candidatesResult.data ?? []) as Candidate[];
   const responses = (responsesResult.data ?? []) as ResponseRecord[];
 
@@ -68,14 +79,24 @@ export default async function ManagePage({ params }: { params: Promise<{ organiz
 
   // 確定前かつGoogle連携済みのときだけ、候補日と幹事の予定を突合する。
   let collisions: CollisionMap | undefined;
+  // 突合に失敗したときは「重なりなし」と区別が付かないので、画面に注記を出す。
+  let collisionCheckFailed = false;
   if (isConnected && !isConfirmed && candidates.length > 0) {
     const organizer = await getOrganizerById(organizerId as string);
     if (organizer) {
-      collisions = await findCalendarCollisions(organizer, candidates);
+      const result = await findCalendarCollisions(organizer, candidates);
+      collisions = result.collisions;
+      collisionCheckFailed = result.failed;
     }
   }
 
   const pendingNames = listPendingNames(candidates, responses);
+  // リマインドは3状態に分かれる。
+  // - 誰も回答していない（responses.length === 0）：名前が1人も分からないので呼びかけ文面を送る
+  // - 一部が未記入（pendingNames.length > 0）：その人の名前を載せた文面を送る
+  // - それ以外：全員が全候補日に回答済みなので、送るものがない
+  const hasNoResponses = responses.length === 0;
+  const canRemind = hasNoResponses || pendingNames.length > 0;
 
   const choices: ConfirmChoice[] = candidates.map((candidate) => ({
     id: candidate.id,
@@ -91,14 +112,18 @@ export default async function ManagePage({ params }: { params: Promise<{ organiz
           <p className="text-sm text-ink-muted">幹事ページ</p>
           <h1 className="font-heading text-2xl font-bold leading-snug">{event.title}</h1>
           {event.memo && <p className="text-ink-muted leading-relaxed">{event.memo}</p>}
-          <p className="text-sm text-ink-muted">
-            <span className="font-numeric">{responses.length}</span>人が回答、
-            未回答は<span className="font-numeric">{pendingNames.length}</span>人
-          </p>
+          {hasNoResponses ? (
+            <p className="text-sm text-ink-muted">まだ誰も回答していません</p>
+          ) : (
+            <p className="text-sm text-ink-muted">
+              <span className="font-numeric">{responses.length}</span>人が回答、
+              未回答は<span className="font-numeric">{pendingNames.length}</span>人
+            </p>
+          )}
         </header>
 
         {isConfirmed && confirmedCandidate && (
-          <section className="space-y-4 rounded-lg border border-rule bg-surface p-6">
+          <section className="space-y-4 rounded-2xl border border-rule bg-surface p-6">
             <p className="text-sm text-ink-muted">この日にきまりました</p>
             <ConfirmedDate startsAt={confirmedCandidate.starts_at} />
             {event.calendar_html_link ? (
@@ -113,7 +138,7 @@ export default async function ManagePage({ params }: { params: Promise<{ organiz
             ) : (
               <p className="text-sm text-ink-muted">
                 {isConnected
-                  ? "カレンダーへの登録はできませんでした。お手数ですが手で入れてください。"
+                  ? "カレンダーへの登録はできませんでした。手でカレンダーに入れてください。"
                   : "Googleとつないでいないので、カレンダーへの登録はしていません。"}
               </p>
             )}
@@ -128,12 +153,32 @@ export default async function ManagePage({ params }: { params: Promise<{ organiz
             collisions={collisions}
             confirmedCandidateId={event.confirmed_candidate_id}
           />
+          {aggregateFailed && (
+            <p className="text-sm text-ink-muted">
+              集計データの取得に失敗しました。時間をおいてもう一度お試しください。
+            </p>
+          )}
+          {collisionCheckFailed && (
+            <p className="text-sm text-ink-muted">
+              予定の重複チェックに失敗しました。時間をおいてもう一度お試しください。
+            </p>
+          )}
         </section>
 
         {!isConfirmed && (
           <section className="space-y-6">
             {isConnected ? (
-              <ReminderButton organizerToken={organizerToken} pendingCount={pendingNames.length} />
+              canRemind ? (
+                <ReminderButton
+                  organizerToken={organizerToken}
+                  pendingCount={pendingNames.length}
+                  totalResponseCount={responses.length}
+                />
+              ) : (
+                <p className="text-sm text-ink-muted leading-relaxed">
+                  全員が全ての候補日に回答済みです。
+                </p>
+              )
             ) : (
               <div className="space-y-2">
                 <a

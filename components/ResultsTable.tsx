@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import type { Answer, Candidate, ResponseRecord } from "@/lib/types";
+import type { Answer, Candidate, CollisionInfo, ResponseRecord } from "@/lib/types";
 import { formatCandidate } from "@/lib/date";
 
 const ANSWER_LABEL: Record<Answer, string> = {
@@ -26,8 +26,6 @@ function AnswerGlyph({ answer }: { answer: Answer | undefined }) {
   );
 }
 
-export type CollisionInfo = { summary: string };
-
 export function ResultsTable({
   candidates,
   responses,
@@ -47,8 +45,10 @@ export function ResultsTable({
     yesCounts.set(candidate.id, count);
   }
   const maxYes = Math.max(0, ...yesCounts.values());
-  const highlightedId =
-    confirmedCandidateId ?? (maxYes > 0 ? sorted.find((c) => yesCounts.get(c.id) === maxYes)?.id : undefined);
+  // 同数トップが複数ある場合は全員をハイライトする（1件だけに絞ると「唯一の最多」に見えてしまうため）
+  const highlightedIds = confirmedCandidateId
+    ? new Set([confirmedCandidateId])
+    : new Set(maxYes > 0 ? sorted.filter((c) => yesCounts.get(c.id) === maxYes).map((c) => c.id) : []);
 
   if (sorted.length === 0) {
     return <p className="text-ink-muted">候補日がまだありません。</p>;
@@ -83,7 +83,7 @@ export function ResultsTable({
           </thead>
           <tbody>
             {sorted.map((candidate, index) => {
-              const isHighlighted = candidate.id === highlightedId;
+              const isHighlighted = highlightedIds.has(candidate.id);
               const collision = collisions?.[candidate.id];
               const rowDivider = index > 0 && index % 4 === 0;
               return (

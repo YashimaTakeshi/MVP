@@ -31,8 +31,16 @@ function buildRawMessage(params: { to: string; subject: string; body: string }):
   return Buffer.from(message, "utf8").toString("base64url");
 }
 
+/**
+ * 回答ページの絶対URL。
+ * NEXTAUTH_URL が未設定だと相対パスだけのリンクになり、転送されたメールの中では開けない。
+ * 気づかないまま「送れました」と表示されるのが最悪なので、ここで例外にして送信自体を失敗させる。
+ */
 function respondUrl(eventId: string): string {
-  const base = (process.env.NEXTAUTH_URL ?? "").replace(/\/$/, "");
+  const base = (process.env.NEXTAUTH_URL ?? "").trim().replace(/\/$/, "");
+  if (!base.startsWith("http")) {
+    throw new Error("NEXTAUTH_URLが設定されていないため、回答ページのURLを作れませんでした。");
+  }
   return `${base}/e/${eventId}`;
 }
 
@@ -41,6 +49,25 @@ export function buildReminderBody(params: {
   eventId: string;
   pendingNames: string[];
 }): string {
+  const url = respondUrl(params.eventId);
+
+  // 参加者名簿を持たないため、1人も回答が無いときは「誰が未回答か」を出せない。
+  // その場合は名前一覧ではなく、URLをもう一度共有してもらう文面にする。
+  if (params.pendingNames.length === 0) {
+    return [
+      `「${params.eventTitle}」の日程調整です。`,
+      "",
+      "まだ誰も回答していません。",
+      "参加者に共有した日程調整のURLをもう一度送って、回答を呼びかけてください。",
+      "",
+      url,
+      "",
+      "このメールは幹事のあなた宛に届いています。",
+      "上の文面をそのまま、参加者へ転送してお使いください。",
+      "",
+    ].join("\n");
+  }
+
   const names = params.pendingNames.map((name) => `　${name} さん`).join("\n");
   return [
     `「${params.eventTitle}」の日程調整です。`,
@@ -50,7 +77,7 @@ export function buildReminderBody(params: {
     names,
     "",
     "回答はこちらのページからお願いします。",
-    respondUrl(params.eventId),
+    url,
     "",
     "このメールは幹事のあなた宛に届いています。",
     "上の文面をそのまま、未回答の方へ転送してお使いください。",
@@ -67,16 +94,23 @@ export async function sendReminderToOrganizer(
   params: { eventTitle: string; eventId: string; pendingNames: string[] },
 ): Promise<void> {
   if (!organizer.email) {
-    throw new Error("幹事のメールアドレスが取得できていません。Googleとつなぎ直してください");
+    throw new Error("幹事のメールアドレスが取得できていません。Googleとつなぎ直してください。");
   }
+
+  // 本文を先に組み立てる（URLが作れない場合はここで例外になり、送信前に止まる）。
+  const body = buildReminderBody(params);
+  const subject =
+    params.pendingNames.length === 0
+      ? `「${params.eventTitle}」まだ誰も回答していません`
+      : `「${params.eventTitle}」まだ回答がそろっていません`;
 
   const auth = createOrganizerOAuthClient(organizer);
   const gmail = google.gmail({ version: "v1", auth });
 
   const raw = buildRawMessage({
     to: organizer.email,
-    subject: `「${params.eventTitle}」まだ回答がそろっていません`,
-    body: buildReminderBody(params),
+    subject,
+    body,
   });
 
   await gmail.users.messages.send({

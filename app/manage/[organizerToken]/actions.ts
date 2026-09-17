@@ -40,10 +40,10 @@ async function findEventByOrganizerToken(organizerToken: string): Promise<EventR
 export async function sendReminder(organizerToken: string): Promise<ActionResult> {
   const event = await findEventByOrganizerToken(organizerToken);
   if (!event) {
-    return { ok: false, message: "イベントが見つかりませんでした" };
+    return { ok: false, message: "イベントが見つかりませんでした。" };
   }
   if (!event.organizer_id) {
-    return { ok: false, message: "先にGoogleカレンダーとつないでください" };
+    return { ok: false, message: "先にGoogleカレンダーとつないでください。" };
   }
 
   const supabase = createServiceRoleClient();
@@ -53,19 +53,21 @@ export async function sendReminder(organizerToken: string): Promise<ActionResult
   ]);
   if (candidatesResult.error || responsesResult.error) {
     console.error("集計データの取得に失敗しました", candidatesResult.error ?? responsesResult.error);
-    return { ok: false, message: "うまく送れませんでした。時間をおいてもう一度お試しください" };
+    return { ok: false, message: "うまく送れませんでした。時間をおいてもう一度お試しください。" };
   }
 
   const candidates = (candidatesResult.data ?? []) as Candidate[];
   const responses = (responsesResult.data ?? []) as ResponseRecord[];
   const pendingNames = listPendingNames(candidates, responses);
-  if (pendingNames.length === 0) {
-    return { ok: false, message: "未回答の人はいません" };
+  // 1人も回答が無いときは pendingNames も空になるが、これは「全員回答済み」ではなく
+  // 「誰も手を付けていない」状態なので、呼びかけの文面を送る（gmail側で文面が分岐する）。
+  if (pendingNames.length === 0 && responses.length > 0) {
+    return { ok: false, message: "未回答の人はいません。" };
   }
 
   const organizer = await getOrganizerById(event.organizer_id);
   if (!organizer) {
-    return { ok: false, message: "Googleとの連携が切れています。つなぎ直してください" };
+    return { ok: false, message: "Googleとの連携が切れています。つなぎ直してください。" };
   }
 
   try {
@@ -75,8 +77,12 @@ export async function sendReminder(organizerToken: string): Promise<ActionResult
       pendingNames,
     });
   } catch (error) {
-    console.error("リマインドメールの送信に失敗しました", error);
-    return { ok: false, message: "うまく送れませんでした。時間をおいてもう一度お試しください" };
+    // GaxiosErrorはアクセストークン入りのリクエスト設定を抱えているため、メッセージだけを出す。
+    console.error(
+      "リマインドメールの送信に失敗しました",
+      error instanceof Error ? error.message : error,
+    );
+    return { ok: false, message: "うまく送れませんでした。時間をおいてもう一度お試しください。" };
   }
 
   return { ok: true };
@@ -88,7 +94,7 @@ export async function sendReminder(organizerToken: string): Promise<ActionResult
 export async function confirmEvent(organizerToken: string, candidateId: string): Promise<ActionResult> {
   const event = await findEventByOrganizerToken(organizerToken);
   if (!event) {
-    return { ok: false, message: "イベントが見つかりませんでした" };
+    return { ok: false, message: "イベントが見つかりませんでした。" };
   }
   if (event.confirmed_candidate_id) {
     // すでに確定済み。再表示すれば確定状態が出るので、エラーにはせず案内だけ返す。
@@ -104,20 +110,30 @@ export async function confirmEvent(organizerToken: string, candidateId: string):
     .eq("event_id", event.id) // 他イベントの候補日IDを渡されても通らないようにする
     .maybeSingle();
   if (candidateError || !candidateData) {
-    return { ok: false, message: "その候補日は見つかりませんでした" };
+    return { ok: false, message: "その候補日は見つかりませんでした。" };
   }
   const candidate = candidateData as Candidate;
 
-  const { error: updateError } = await supabase
+  // 複数タブから同時に確定された場合、どちらも「未確定」を読んでからここへ来る。
+  // `is("confirmed_candidate_id", null)` を条件に付けて、先勝ちの1回だけが通るようにする
+  // （これが無いと両方が成功し、Googleカレンダーに同じ予定が2件入る）。
+  const { data: updatedRows, error: updateError } = await supabase
     .from("events")
     .update({
       confirmed_candidate_id: candidate.id,
       confirmed_at: new Date().toISOString(),
     })
-    .eq("id", event.id);
+    .eq("id", event.id)
+    .is("confirmed_candidate_id", null)
+    .select("id");
   if (updateError) {
     console.error("確定の保存に失敗しました", updateError);
-    return { ok: false, message: "うまく保存できませんでした。時間をおいてもう一度お試しください" };
+    return { ok: false, message: "うまく保存できませんでした。時間をおいてもう一度お試しください。" };
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    // 先に別のタブが確定していた。エラーにはせず、再表示で確定状態を見せる。
+    revalidatePath(`/manage/${organizerToken}`);
+    return { ok: true };
   }
 
   // Google連携済みならカレンダーにも入れる。ここで失敗しても確定そのものは取り消さない。
