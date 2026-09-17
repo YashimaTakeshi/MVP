@@ -12,11 +12,6 @@ const CANDIDATE_MAX = 30;
 // `<input type="datetime-local">` の値（例: 2026-09-18T19:00）
 const DATETIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 
-// Googleカレンダー連携（OAuth本体は別担当が実装中のため、今は導線だけ置く）。
-// つくったあとの管理ページでは `/api/auth/signin/google?callbackUrl=/manage/{organizerToken}` を使うが、
-// このページではまだ organizer_token が発行されていないので、戻り先はこのページにしておく。
-const GOOGLE_CONNECT_HREF = "/api/auth/signin/google?callbackUrl=/new";
-
 type CandidateField = {
   id: string;
   value: string;
@@ -170,18 +165,14 @@ export default function NewEventPage() {
             </p>
           </div>
 
-          {/* Googleカレンダー連携の導線 */}
+          {/* Googleカレンダー連携の案内。
+              このページでつなぐとOAuthのページ遷移で入力が消えるため、
+              実際につなぐのはつくったあとの幹事ページ（/manage/{organizerToken}）にまかせる。 */}
           <section className="space-y-2 rounded-lg border border-rule bg-surface p-4">
             <h2 className="font-heading font-bold">Googleカレンダー</h2>
             <p className="text-sm leading-relaxed text-ink-muted">
-              つなぐと、幹事の予定と候補日を照らし合わせられます。つくったあとの管理ページからでもつなげます。
+              つくると、次の画面（幹事ページ）からGoogleカレンダーと連携できます。つなぐと、幹事の予定と候補日を照らし合わせられます。
             </p>
-            <a
-              href={GOOGLE_CONNECT_HREF}
-              className="inline-flex h-11 items-center justify-center rounded-lg border border-rule px-4 text-ink"
-            >
-              Googleカレンダーとつなぐ
-            </a>
             <p className="text-sm text-ink-muted">つながなくても日程調整はできます。</p>
           </section>
 

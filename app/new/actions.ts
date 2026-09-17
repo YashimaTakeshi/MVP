@@ -8,21 +8,53 @@ const MEMO_MAX = 200;
 const CANDIDATE_MAX = 30;
 
 // `<input type="datetime-local">` の値（例: 2026-09-18T19:00 / 2026-09-18T19:00:00）
-const DATETIME_LOCAL_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+const DATETIME_LOCAL_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+const INVALID_CANDIDATE_ERROR = "候補日の日付と時刻を正しく入れてください。";
+const NONEXISTENT_DATE_ERROR = "その日付は存在しません。候補日を見なおしてください。";
+const DUPLICATE_CANDIDATE_ERROR = "同じ日時の候補が重複しています。ひとつだけ残してください。";
 
 export type CreateEventState = {
   error: string | null;
 };
 
+type ParsedCandidate = { ok: true; iso: string } | { ok: false; error: string };
+
 // datetime-localは「壁掛け時計の時刻」でタイムゾーンを持たない。
 // サーバーのローカルタイムゾーン（多くの場合UTC）で解釈すると9時間ずれるため、
 // このアプリの基準であるJST（+09:00）として解釈してISO文字列（UTC）に変換する。
-function toIsoFromJstLocal(value: string): string | null {
-  if (!DATETIME_LOCAL_PATTERN.test(value)) return null;
-  const withSeconds = value.length === 16 ? `${value}:00` : value;
-  const parsed = new Date(`${withSeconds}+09:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
+//
+// `new Date("2026-02-30T19:00+09:00")` のような存在しない日付はエラーにならず
+// 3月2日へ自動で繰り上がってしまうため、文字列を自前で分解して組み立てたうえで、
+// 組み立てたDateから読み戻した値が入力と一致するかを必ず検算する。
+function toIsoFromJstLocal(value: string): ParsedCandidate {
+  const matched = DATETIME_LOCAL_PATTERN.exec(value);
+  if (!matched) return { ok: false, error: INVALID_CANDIDATE_ERROR };
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const hour = Number(matched[4]);
+  const minute = Number(matched[5]);
+  const second = matched[6] === undefined ? 0 : Number(matched[6]);
+
+  // JSTの壁掛け時計の時刻をいったんUTCの同じ数値として組み立て、あとで9時間戻す。
+  const wallClock = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+
+  const matchesInput =
+    wallClock.getUTCFullYear() === year &&
+    wallClock.getUTCMonth() === month - 1 &&
+    wallClock.getUTCDate() === day &&
+    wallClock.getUTCHours() === hour &&
+    wallClock.getUTCMinutes() === minute &&
+    wallClock.getUTCSeconds() === second;
+  if (!matchesInput) {
+    return { ok: false, error: NONEXISTENT_DATE_ERROR };
+  }
+
+  return { ok: true, iso: new Date(wallClock.getTime() - JST_OFFSET_MS).toISOString() };
 }
 
 /**
@@ -59,12 +91,19 @@ export async function createEvent(formData: FormData): Promise<CreateEventState>
   }
 
   const startsAtList: string[] = [];
+  // 同じ日時の候補が2つ以上あると、参加者が選べない候補日が並んでしまう。
+  // 勝手に片方を消さず、幹事に気づいてもらうためエラーとして返す。
+  const seenStartsAt = new Set<string>();
   for (const raw of rawCandidates) {
-    const iso = toIsoFromJstLocal(raw);
-    if (!iso) {
-      return { error: "候補日の日付と時刻を正しく入れてください。" };
+    const parsed = toIsoFromJstLocal(raw);
+    if (!parsed.ok) {
+      return { error: parsed.error };
     }
-    startsAtList.push(iso);
+    if (seenStartsAt.has(parsed.iso)) {
+      return { error: DUPLICATE_CANDIDATE_ERROR };
+    }
+    seenStartsAt.add(parsed.iso);
+    startsAtList.push(parsed.iso);
   }
 
   // --- 保存 ---
