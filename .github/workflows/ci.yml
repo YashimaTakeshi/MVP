@@ -15,8 +15,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
       - run: npx eslint .
+      # next buildが内部でNext.js固有の型（LayoutProps等）を生成してから型チェックするため、
+      # 単体のtsc --noEmitを先に走らせると生成前の型が無くエラーになる。buildにまとめる。
       - run: npm run build
         env:
           # ビルド時に必須の環境変数はダミー値で通す（実際の外部アクセスは行わない）
