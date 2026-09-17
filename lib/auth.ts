@@ -1,12 +1,9 @@
 import "server-only";
 import type { AuthOptions } from "next-auth";
-import type { JWT } from "next-auth/jwt";
 import GoogleProvider from "next-auth/providers/google";
 import { google } from "googleapis";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { decrypt, encrypt } from "@/lib/crypto";
-
-const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 
 // 幹事が同意するスコープ。
 // - calendar.freebusy : 候補日と幹事の予定の突合（予定の中身は読まない）
@@ -20,9 +17,6 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.send",
 ].join(" ");
-
-// 期限切れ判定のマージン（秒）。通信のラグでギリギリ切れるのを避ける。
-const EXPIRY_SKEW_SECONDS = 60;
 
 function nowInSeconds(): number {
   return Math.floor(Date.now() / 1000);
@@ -125,64 +119,14 @@ async function persistRefreshedTokens(params: {
   }
 }
 
-type GoogleTokenResponse = {
-  access_token?: string;
-  expires_in?: number;
-  refresh_token?: string;
-  error?: string;
-  error_description?: string;
-};
-
 /**
- * refresh_token を使ってアクセストークンを取り直す。
- * Googleは2回目以降のレスポンスで refresh_token を返さないため、
- * undefined のときは必ず既存の refresh_token を保持する（ここを落とすと再連携が必要になる）。
+ * 【削除済み】JWT上のアクセストークンを期限切れ時にリフレッシュする処理。
+ *
+ * Google APIの呼び出しはすべて getOrganizerById → createOrganizerOAuthClient という
+ * DB経由の独立経路を通り、そちらは googleapis 側が自動でリフレッシュして
+ * `tokens` イベントでDBへ書き戻す。JWT上のアクセストークンは誰も読まないため、
+ * ここでのリフレッシュはデッドコードだった。session からも accessToken は返さない。
  */
-async function refreshGoogleAccessToken(token: JWT): Promise<JWT> {
-  const refreshToken = token.refreshToken;
-  if (!refreshToken) {
-    return { ...token, error: "NoRefreshToken" };
-  }
-  try {
-    const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: googleClientId(),
-        client_secret: googleClientSecret(),
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-      }),
-      cache: "no-store",
-    });
-    const data = (await response.json()) as GoogleTokenResponse;
-    if (!response.ok || !data.access_token) {
-      throw new Error(data.error_description ?? data.error ?? "アクセストークンの再取得に失敗しました");
-    }
-
-    const expiresAt = nowInSeconds() + (data.expires_in ?? 3600);
-    const nextRefreshToken = data.refresh_token ?? refreshToken;
-
-    await persistRefreshedTokens({
-      organizerId: token.organizerId,
-      googleSub: token.googleSub,
-      accessToken: data.access_token,
-      refreshToken: nextRefreshToken,
-      expiresAt,
-    });
-
-    return {
-      ...token,
-      accessToken: data.access_token,
-      refreshToken: nextRefreshToken,
-      expiresAt,
-      error: undefined,
-    };
-  } catch (error) {
-    console.error("Googleアクセストークンのリフレッシュに失敗しました", error);
-    return { ...token, error: "RefreshAccessTokenError" };
-  }
-}
 
 export const authOptions: AuthOptions = {
   providers: [
@@ -228,24 +172,17 @@ export const authOptions: AuthOptions = {
 
         return {
           ...token,
-          accessToken: accessToken ?? undefined,
           refreshToken: refreshToken ?? undefined,
           expiresAt,
           error: undefined,
         };
       }
 
-      // 期限内ならそのまま使い回す
-      if (token.expiresAt && nowInSeconds() < token.expiresAt - EXPIRY_SKEW_SECONDS) {
-        return token;
-      }
-      if (!token.refreshToken) {
-        return token;
-      }
-      return refreshGoogleAccessToken(token);
+      return token;
     },
     async session({ session, token }) {
-      session.accessToken = token.accessToken;
+      // accessToken は返さない。/api/auth/session は公開エンドポイントであり、
+      // Google Calendar / Gmail のスコープ付きトークンをそこから取れてはいけない。
       session.organizerId = token.organizerId;
       session.googleSub = token.googleSub;
       session.error = token.error;
@@ -292,6 +229,7 @@ export function createOrganizerOAuthClient(organizer: OrganizerRecord) {
 
   client.on("tokens", (tokens) => {
     if (!tokens.access_token) return;
+    // fire-and-forgetなので、rejectがunhandledにならないよう必ずcatchする。
     void persistRefreshedTokens({
       organizerId: organizer.id,
       googleSub: organizer.google_sub,
@@ -299,6 +237,8 @@ export function createOrganizerOAuthClient(organizer: OrganizerRecord) {
       // ここでもrefresh_tokenが返らないことがあるため既存値を保持する
       refreshToken: tokens.refresh_token ?? refreshToken,
       expiresAt: tokens.expiry_date ? Math.floor(tokens.expiry_date / 1000) : nowInSeconds() + 3600,
+    }).catch((error) => {
+      console.error("トークンの再保存に失敗しました", error instanceof Error ? error.message : error);
     });
   });
 

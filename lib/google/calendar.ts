@@ -14,6 +14,8 @@ const CANDIDATE_DURATION_MS = CANDIDATE_DURATION_MINUTES * 60 * 1000;
 export type CollisionInfo = { summary: string };
 /** candidate.id -> 被っている予定の要約 */
 export type CollisionMap = Record<string, CollisionInfo>;
+/** 突合の結果。failedがtrueのときは「重なりなし」ではなく「確認できなかった」を意味する。 */
+export type CollisionResult = { collisions: CollisionMap; failed: boolean };
 
 function jstTime(ms: number): string {
   return new Intl.DateTimeFormat("ja-JP", {
@@ -45,13 +47,14 @@ function formatBusyRange(busyStart: number, busyEnd: number, candidateStart: num
  * 候補日と幹事のプライマリカレンダーの予定を突合する。
  * freebusy.query は候補日全体をカバーする期間で1回だけ呼び、結果の busy 配列と
  * 各候補日（開始〜+1時間）の重なりをアプリ側で判定する。
- * 失敗しても管理ページ自体は表示できるべきなので、例外は握りつぶして空のマップを返す。
+ * 失敗しても管理ページ自体は表示できるべきなので例外は投げないが、
+ * 「重なりなし」と区別できるよう failed: true を返して呼び出し元に注記を出させる。
  */
 export async function findCalendarCollisions(
   organizer: OrganizerRecord,
   candidates: Candidate[],
-): Promise<CollisionMap> {
-  if (candidates.length === 0) return {};
+): Promise<CollisionResult> {
+  if (candidates.length === 0) return { collisions: {}, failed: false };
 
   const starts = candidates.map((candidate) => new Date(candidate.starts_at).getTime());
   const rangeStart = Math.min(...starts);
@@ -70,7 +73,7 @@ export async function findCalendarCollisions(
     });
 
     const busy = response.data.calendars?.primary?.busy ?? [];
-    if (busy.length === 0) return {};
+    if (busy.length === 0) return { collisions: {}, failed: false };
 
     const collisions: CollisionMap = {};
     for (const candidate of candidates) {
@@ -92,10 +95,12 @@ export async function findCalendarCollisions(
         collisions[candidate.id] = { summary: overlaps.join("、") };
       }
     }
-    return collisions;
+    return { collisions, failed: false };
   } catch (error) {
-    console.error("freebusyの取得に失敗しました", error);
-    return {};
+    // GaxiosErrorは失敗したリクエストの設定（Authorizationヘッダー）を抱えているため、
+    // オブジェクトごと渡さずメッセージだけを出す。
+    console.error("freebusyの取得に失敗しました", error instanceof Error ? error.message : error);
+    return { collisions: {}, failed: true };
   }
 }
 
@@ -125,7 +130,8 @@ export async function insertConfirmedCalendarEvent(
 
     return response.data.htmlLink ?? null;
   } catch (error) {
-    console.error("カレンダーへの登録に失敗しました", error);
+    // アクセストークンがログに残らないよう、エラーオブジェクトではなくメッセージだけを出す。
+    console.error("カレンダーへの登録に失敗しました", error instanceof Error ? error.message : error);
     return null;
   }
 }

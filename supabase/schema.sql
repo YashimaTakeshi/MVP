@@ -55,9 +55,8 @@ create index responses_event_id_idx on responses(event_id);
 -- events.organizer_token（幹事だけが知る秘密値）が anon key で直接SELECTされないよう、
 -- events / candidates は anon 向けポリシーを一切定義しない（service_role専用）。
 -- Server Component（Next.jsサーバー側）は service_role client で読み書きするため、これで支障はない。
--- 唯一 anon に公開するのは responses の SELECT のみ：ブラウザの Realtime 購読（postgres_changes）が
--- anon key で動作するために必須（回答一覧のリアルタイム反映）。書き込みは全テーブルとも
--- サーバー側のServer Action経由でservice_role keyを使って行う。
+-- 読み書きは全テーブルとも、サーバー側のServer Component / Server Action経由で
+-- service_role keyを使って行う。anon 向けのポリシーはどのテーブルにも存在しない。
 
 alter table organizers enable row level security;
 -- organizersにはanon/authenticated向けのポリシーを一切定義しない（service_role専用・完全遮断）。
@@ -69,8 +68,11 @@ alter table candidates enable row level security;
 -- anon/authenticated向けポリシーなし（service_role専用）。events同様、直接公開する必要がないため。
 
 alter table responses enable row level security;
-create policy responses_select_public on responses for select using (true);
-
--- ブラウザの Realtime 購読（postgres_changes）はテーブルが supabase_realtime publication に
--- 含まれていないと配信されない。responses のみ追加する（events/candidatesはanon非公開のため対象外）。
-alter publication supabase_realtime add table responses;
+-- anon/authenticated向けポリシーなし（service_role専用）。
+-- かつては Realtime 購読（postgres_changes）のために
+-- `create policy responses_select_public on responses for select using (true);` と
+-- `alter publication supabase_realtime add table responses;` を置いていたが、
+-- このポリシーは event_id で絞り込めないため、ブラウザに公開される anon key があれば
+-- 全イベントの回答者名やコメントを横断的に読み出せてしまう（cross-eventの情報漏洩）。
+-- anon への直接公開は廃止し、回答一覧の更新はクライアントからのポーリング
+-- （app/e/[eventId]/_components/RealtimeResults.tsx）でサーバー側から取り直す方式に切り替えた。

@@ -2,17 +2,24 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createBrowserClient } from "@/lib/supabase/client";
 import { ResultsTable } from "@/components/ResultsTable";
 import type { Candidate, ResponseRecord } from "@/lib/types";
 
+/**
+ * 回答一覧を定期的に取り直す。
+ *
+ * 以前はSupabaseのRealtime購読（postgres_changes）で更新を検知していたが、
+ * それにはanon keyで responses テーブルをSELECTできるRLSポリシーが必要で、
+ * event_idで絞り込めないためイベント横断で回答者名やコメントが読めてしまう。
+ * 情報漏洩のリスクの方が大きいので購読はやめ、Server Componentへのポーリングに切り替えた。
+ */
+const REFRESH_INTERVAL_MS = 5000;
+
 export function RealtimeResults({
-  eventId,
   candidates,
   responses,
   confirmedCandidateId,
 }: {
-  eventId: string;
   candidates: Candidate[];
   responses: ResponseRecord[];
   confirmedCandidateId?: string | null;
@@ -20,28 +27,39 @@ export function RealtimeResults({
   const router = useRouter();
 
   useEffect(() => {
-    const supabase = createBrowserClient();
-    // 差分マージはせず、変更を検知したらServer Componentに取り直させる
-    const channel = supabase
-      .channel(`responses-${eventId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "responses",
-          filter: `event_id=eq.${eventId}`,
-        },
-        () => {
-          router.refresh();
-        }
-      )
-      .subscribe();
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (timer !== null) return;
+      timer = setInterval(() => {
+        router.refresh();
+      }, REFRESH_INTERVAL_MS);
+    };
+
+    const stop = () => {
+      if (timer === null) return;
+      clearInterval(timer);
+      timer = null;
+    };
+
+    // タブが見えていない間は取りに行かない。戻ってきたらすぐ1回取り直す。
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
+      router.refresh();
+      start();
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      void supabase.removeChannel(channel);
+      stop();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [eventId, router]);
+  }, [router]);
 
   return (
     <ResultsTable

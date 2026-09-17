@@ -7,8 +7,9 @@ export type GoogleAuthError = "RefreshAccessTokenError" | "NoRefreshToken";
 declare module "next-auth" {
   interface Session {
     user?: DefaultSession["user"];
-    /** Google APIを叩くためのアクセストークン（期限切れ時はjwtコールバックで更新済み） */
-    accessToken?: string;
+    // accessToken は意図的に持たせない。/api/auth/session は公開エンドポイントなので、
+    // Google APIのスコープ付きトークンをセッションに載せない（実際のAPI呼び出しは
+    // getOrganizerById 経由でDBから復号したトークンを使う）。
     /** organizers.id。/manage/[organizerToken] でイベントと幹事を紐付けるのに使う */
     organizerId?: string;
     /** Googleのユーザー識別子（profile.sub）。organizers.google_sub と一致する */
@@ -20,7 +21,6 @@ declare module "next-auth" {
 
 declare module "next-auth/jwt" {
   interface JWT {
-    accessToken?: string;
     /** 平文のrefresh_token。NextAuthのJWTはJWEで暗号化されるためCookie上は平文にならない */
     refreshToken?: string;
     /** 秒単位のUNIXタイムスタンプ（Googleのexpires_atと同じ単位） */
