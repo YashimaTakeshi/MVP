@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+:root {
+  /* デザイントークン（工程4で審査・統合した「台帳」案） */
+  --color-ground: #eff1ec; /* ページ背景 */
+  --color-surface: #f7f8f4; /* カード・sticky列の不透明面 */
+  --color-ink: #1b2321; /* 本文・見出し・△記号 */
+  --color-ink-muted: #5a6461; /* 補助テキスト・×記号・4行ごとの濃罫 */
+  --color-bamboo: #176a5a; /* ○・主ボタン・最多行の反転地・フォーカス */
+  --color-mustard: #7c5a10; /* △のラベル・注意 */
+  --color-vermilion: #b5372b; /* カレンダー衝突警告のみ */
+  --color-rule: #d3d8ce; /* 装飾的な横罫 */
+
+  --font-heading: var(--font-zen-kaku);
+  --font-body: var(--font-zen-kaku);
+  --font-numeric: var(--font-plex-mono);
+  --font-handwritten: var(--font-klee-one);
+}
+
+@theme inline {
+  --color-ground: var(--color-ground);
+  --color-surface: var(--color-surface);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-bamboo: var(--color-bamboo);
+  --color-mustard: var(--color-mustard);
+  --color-vermilion: var(--color-vermilion);
+  --color-rule: var(--color-rule);
+
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+  --font-numeric: var(--font-numeric);
+  --font-handwritten: var(--font-handwritten);
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+
+/* デザイン原則：影は全面禁止。段差は面色（surface）と罫線（rule）だけで表現する。 */
+
+:focus-visible {
+  outline: 2px solid var(--color-bamboo);
+  outline-offset: 2px;
+}
+
+/* 青竹地の上（反転行・主ボタン）ではフォーカスリングを面色に反転させる */
+.on-bamboo:focus-visible {
+  outline-color: var(--color-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
