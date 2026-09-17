@@ -70,3 +70,7 @@ alter table candidates enable row level security;
 
 alter table responses enable row level security;
 create policy responses_select_public on responses for select using (true);
+
+-- ブラウザの Realtime 購読（postgres_changes）はテーブルが supabase_realtime publication に
+-- 含まれていないと配信されない。responses のみ追加する（events/candidatesはanon非公開のため対象外）。
+alter publication supabase_realtime add table responses;
