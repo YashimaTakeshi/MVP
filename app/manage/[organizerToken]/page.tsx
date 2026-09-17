@@ -10,7 +10,14 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import type { Candidate, CollisionMap, EventRecord, ResponseRecord } from "@/lib/types";
 import { ConfirmForm, type ConfirmChoice } from "./_components/ConfirmForm";
 import { ReminderButton } from "./_components/ReminderButton";
+import { ShareLink } from "./_components/ShareLink";
 import { listPendingNames } from "./_components/pending";
+
+// 参加者向けURLの組み立てに使う。gmail.tsのrespondUrlと同じ考え方（NEXTAUTH_URLを絶対URLの基準にする）。
+function participantUrl(eventId: string): string {
+  const base = (process.env.NEXTAUTH_URL ?? "").replace(/\/$/, "");
+  return `${base}/e/${eventId}`;
+}
 
 // 管理URLは秘密値なので、検索エンジンには絶対に載せない。
 export const metadata: Metadata = {
@@ -121,6 +128,8 @@ export default async function ManagePage({ params }: { params: Promise<{ organiz
             </p>
           )}
         </header>
+
+        <ShareLink url={participantUrl(event.id)} />
 
         {isConfirmed && confirmedCandidate && (
           <section className="space-y-4 rounded-2xl border border-rule bg-surface p-6">
